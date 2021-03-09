@@ -97,6 +97,8 @@ parser.add_argument('--aug-plus', action='store_true',
 parser.add_argument('--cos', action='store_true',
                     help='use cosine lr schedule')
 
+parser.add_argument('--pretrained', default='none', type=str, help='imagenet, mocov2')
+
 
 def main():
     args = parser.parse_args()
@@ -156,9 +158,11 @@ def main_worker(gpu, ngpus_per_node, args):
                                 world_size=args.world_size, rank=args.rank)
     # create model
     print("=> creating model '{}'".format(args.arch))
+
     model = moco.builder.MoCo(
-        models.__dict__[args.arch],
-        args.moco_dim, args.moco_k, args.moco_m, args.moco_t, args.mlp)
+        #models.__dict__[args.arch],
+        args.arch,
+        args.moco_dim, args.moco_k, args.moco_m, args.moco_t, args.mlp, args.pretrained)
     print(model)
 
     if args.distributed:
@@ -395,7 +399,7 @@ def accuracy(output, target, topk=(1,)):
 
         res = []
         for k in topk:
-            correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+            correct_k = correct[:k].contiguous().view(-1).float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 
