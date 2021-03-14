@@ -30,8 +30,8 @@ model_names = sorted(name for name in models.__dict__
     and callable(models.__dict__[name]))
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
-parser.add_argument('data', metavar='DIR',
-                    help='path to dataset')
+#parser.add_argument('data', metavar='DIR',
+#                    help='path to dataset')
 parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                     choices=model_names,
                     help='model architecture: ' +
@@ -98,10 +98,15 @@ parser.add_argument('--cos', action='store_true',
                     help='use cosine lr schedule')
 
 parser.add_argument('--pretrained', default='none', type=str, help='imagenet, mocov2')
+parser.add_argument('--output', default='none', help='output_dir')
+parser.add_argument('--imagenet', action='store_true', help='add imagenet image')
+parser.add_argument('--balanced', action='store_true', help='balancing imagenet and scannet images')
 
 
 def main():
     args = parser.parse_args()
+
+    os.makedirs(args.output, exist_ok=True)
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -165,6 +170,7 @@ def main_worker(gpu, ngpus_per_node, args):
         args.moco_dim, args.moco_k, args.moco_m, args.moco_t, args.mlp, args.pretrained)
     print(model)
 
+
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
         # should always set the single device scope, otherwise,
@@ -191,7 +197,8 @@ def main_worker(gpu, ngpus_per_node, args):
     else:
         # AllGather implementation (batch shuffle, queue update, etc.) in
         # this code only supports DistributedDataParallel.
-        raise NotImplementedError("Only DistributedDataParallel is supported.")
+        #raise NotImplementedError("Only DistributedDataParallel is supported.")
+        print(1)
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
@@ -221,7 +228,7 @@ def main_worker(gpu, ngpus_per_node, args):
     cudnn.benchmark = True
 
     # Data loading code
-    traindir = os.path.join(args.data, 'train')
+    #traindir = os.path.join(args.data, 'train')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
     if args.aug_plus:
@@ -251,13 +258,22 @@ def main_worker(gpu, ngpus_per_node, args):
     #train_dataset = datasets.ImageFolder(
     #    traindir,
     #    moco.loader.TwoCropsTransform(transforms.Compose(augmentation)))
-    from scannet import ScanNet
-    train_dataset = ScanNet(moco.loader.TwoCropsTransform(transforms.Compose(augmentation)))
+    from scannet import ScanNet as DefaultDataset
+    if args.imagenet:
+        from scannet_imagenet import ScanNetImageNet as DefaultDataset
+    train_dataset = DefaultDataset(moco.loader.TwoCropsTransform(transforms.Compose(augmentation)))
 
     if args.distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+        if args.balanced:
+            from balanced_sampler import DistributedBalancedSampler
+            train_sampler = DistributedBalancedSampler(train_dataset)
+        else:
+            train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     else:
         train_sampler = None
+        if args.balanced:
+            from balanced_sampler import BalancedSampler
+            train_sampler = BalancedSampler(train_dataset)
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
@@ -278,7 +294,7 @@ def main_worker(gpu, ngpus_per_node, args):
                 'arch': args.arch,
                 'state_dict': model.state_dict(),
                 'optimizer' : optimizer.state_dict(),
-            }, is_best=False, filename='checkpoint_{:04d}.pth.tar'.format(epoch))
+            }, is_best=False, filename='{}/checkpoint_{:04d}.pth.tar'.format(args.output, epoch))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -296,7 +312,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
     model.train()
 
     end = time.time()
-    for i, (images, _) in enumerate(train_loader):
+    for i, (images, labelid) in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
 
